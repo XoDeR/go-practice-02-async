@@ -3,8 +3,11 @@ package main
 import (
 	"io"
 	"log"
+	"math/rand"
 	"pool/pool"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -33,12 +36,37 @@ func createConnection() (io.Closer, error) {
 }
 
 func main() {
+	var wg sync.WaitGroup
+	wg.Add(maxGoroutines)
 
 	p, err := pool.New(createConnection, pooledResources)
 	if err != nil {
 		log.Println(err)
 	}
 
-	log.Println(p)
+	for query := 0; query < maxGoroutines; query++ {
+		go func(q int) {
+			performQueries(q, p)
+			wg.Done()
+		}(query)
+	}
 
+	wg.Wait()
+
+	log.Println("Shutdown program")
+	p.Close()
+}
+
+func performQueries(query int, p *pool.Pool) {
+	conn, err := p.Acquire()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	defer p.Release(conn)
+
+	// Simulate query response by waiting for some time
+	time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+	log.Printf("Query: QueryId[%d] ConnectionId[%d]\n", query, conn.(*dbConnection).ID)
 }

@@ -5,6 +5,7 @@ package pool
 import (
 	"errors"
 	"io"
+	"log"
 	"sync"
 )
 
@@ -29,14 +30,51 @@ func New(fn func() (io.Closer, error), size uint) (*Pool, error) {
 	}, nil
 }
 
-func (p *Pool) Acquire() {
-
+func (p *Pool) Acquire() (io.Closer, error) {
+	select {
+	case r, ok := <-p.resources:
+		log.Println("Acquire:", "shared resource")
+		if !ok {
+			return nil, ErrPoolClosed
+		}
+		return r, nil
+	default:
+		log.Println("Acquire:", "new resource")
+		return p.factory()
+	}
 }
 
-func (p *Pool) Release() {
+func (p *Pool) Release(r io.Closer) {
+	p.m.Lock()
+	defer p.m.Unlock()
 
+	if p.closed {
+		r.Close()
+		return
+	}
+
+	select {
+	case p.resources <- r:
+		log.Println("Release:", "in queue")
+	default:
+		log.Println("Release:", "closing")
+		r.Close()
+	}
 }
 
 func (p *Pool) Close() {
+	p.m.Lock()
+	defer p.m.Unlock()
 
+	if p.closed {
+		return
+	}
+
+	p.closed = true
+
+	close(p.resources)
+
+	for r := range p.resources {
+		r.Close()
+	}
 }
